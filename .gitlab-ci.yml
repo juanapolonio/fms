@@ -1,0 +1,40 @@
+stages:
+  - quality
+  - test
+  - build
+
+frontend_quality:
+  image: node:22.20
+  stage: quality
+  script:
+    - npm install
+    - npm run lint
+
+frontend_test:
+  image: node:22.20
+  stage: test
+  script:
+    - npm install
+    - npm run test
+
+frontend_build:
+  image: node:22.20
+  stage: build
+  script:
+    - npm install
+    - npm run build
+
+backend_quality:
+  image: python:3.11.9
+  stage: quality
+  script:
+    - python -m pip install -e "backend[dev]"
+    - ruff check backend/app backend/tests
+    - mypy backend/app
+
+backend_test:
+  image: python:3.11.9
+  stage: test
+  script:
+    - python -m pip install -e "backend[dev]"
+    - pytest backend/tests -q

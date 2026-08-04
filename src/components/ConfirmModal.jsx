@@ -1,0 +1,3 @@
+export function ConfirmModal({ title, message, confirmLabel = 'Confirm', onClose, onConfirm }) {
+  return <div className="modal-backdrop" role="presentation"><div className="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><div className="modal-heading"><h2 id="confirm-title">{title}</h2><button className="icon-button" onClick={onClose} aria-label="Close dialog"><i className="bi bi-x-lg" /></button></div><p className="confirm-message">{message}</p><div className="modal-actions"><button className="outline-button" onClick={onClose}>Keep</button><button className="danger-button confirm-button" onClick={onConfirm}>{confirmLabel}</button></div></div></div>;
+}

@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: fms
+      POSTGRES_USER: fms
+      POSTGRES_PASSWORD: fms
+    ports:
+      - "5432:5432"
+    volumes:
+      - fms-postgres:/var/lib/postgresql/data
+
+volumes:
+  fms-postgres:
