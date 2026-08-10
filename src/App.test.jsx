@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import App from './App';
 
 vi.mock('./lib/api', () => ({
-  getResource: async (_path, fallback) => ({ items: fallback, source: 'demo' }),
+  api: { get: async () => ({ data: { resources: {}, orders: [] } }) },
 }));
 
 afterEach(cleanup);
