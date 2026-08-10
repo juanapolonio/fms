@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     argo_dev_organization_id: str = "00000000-0000-0000-0000-000000000001"
     argo_dev_user_id: str = "00000000-0000-0000-0000-000000000002"
     argo_dev_role: str = "Administrator"
+    cors_origins: str = "http://localhost:5174,http://127.0.0.1:5174"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
