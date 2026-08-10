@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: fms-marketplace-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -e "backend[dev]"
+    startCommand: PYTHONPATH=backend python -m alembic upgrade head && PYTHONPATH=backend python -m app.seed && PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/marketplace/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: ARGO_JWT_SECRET
+        sync: false
+      - key: ARGO_JWT_ALGORITHM
+        value: HS256
+      - key: ARGO_DEV_ORGANIZATION_ID
+        value: 00000000-0000-0000-0000-000000000001
+      - key: ARGO_DEV_USER_ID
+        value: 00000000-0000-0000-0000-000000000002
+      - key: ARGO_DEV_ROLE
+        value: Administrator
+      - key: CORS_ORIGINS
+        sync: false
