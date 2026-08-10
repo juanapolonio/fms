@@ -38,6 +38,7 @@ function getMetrics(config, rows, orders) {
 export function ResourcePage({ config }) {
   const key = keyByTitle[config.title];
   const searchLabel = config.singular === 'Category' ? 'categories' : `${config.singular.toLowerCase()}s`;
+  const readOnly = ['payments', 'cancellations'].includes(key);
   const rows = useMarketplaceStore((state) => state.resources[key] || []);
   const orders = useMarketplaceStore((state) => state.orders);
   const addResource = useMarketplaceStore((state) => state.addResource);
@@ -66,25 +67,29 @@ export function ResourcePage({ config }) {
   const metrics = useMemo(() => getMetrics(config, rows, orders), [config, rows, orders]);
   const openCreate = () => setModal({ mode: 'create', values: fieldValues() });
   const openEdit = (record) => setModal({ mode: 'edit', record, values: fieldValues(record) });
-  const saveRecord = () => {
+  const saveRecord = async () => {
     const requiredFields = fields.filter((field) => field.required !== false);
     if (requiredFields.some((field) => !String(modal.values[field.key] ?? '').trim())) return;
-    if (modal.mode === 'edit') {
-      updateResource(key, modal.record.id, modal.values);
-      setSelected((current) => current?.id === modal.record.id ? { ...modal.record, ...modal.values } : current);
-    } else addResource(key, { ...modal.values, items: 0, order: rows.length + 1 });
-    setToast(`${config.singular} ${modal.mode === 'edit' ? 'updated' : 'created'} successfully`);
-    setModal(null);
+    try {
+      if (modal.mode === 'edit') {
+        await updateResource(key, modal.record.id, modal.values);
+        setSelected(null);
+      } else await addResource(key, { ...modal.values, items: 0, order: rows.length + 1 });
+      setToast(`${config.singular} ${modal.mode === 'edit' ? 'updated' : 'created'} successfully`);
+      setModal(null);
+    } catch (error) { setToast(error.response?.data?.detail || `Unable to save ${config.singular.toLowerCase()}`); }
   };
-  const performDelete = () => {
-    deleteResource(key, confirmDelete.id);
-    setSelected(null);
-    setConfirmDelete(null);
-    setToast(`${config.singular} deleted successfully`);
+  const performDelete = async () => {
+    try {
+      await deleteResource(key, confirmDelete.id);
+      setSelected(null);
+      setConfirmDelete(null);
+      setToast(`${config.singular} deleted successfully`);
+    } catch (error) { setToast(error.response?.data?.detail || `Unable to delete ${config.singular.toLowerCase()}`); }
   };
-  const handleDuplicate = (record) => {
-    duplicateResource(key, record);
-    setToast(`${config.singular} duplicated successfully`);
+  const handleDuplicate = async (record) => {
+    try { await duplicateResource(key, record); setToast(`${config.singular} duplicated successfully`); }
+    catch (error) { setToast(error.response?.data?.detail || `Unable to duplicate ${config.singular.toLowerCase()}`); }
   };
-  return <section className="page-content"><div className="page-heading"><div><h1>{config.title}</h1><p>{config.description}</p></div><button className="primary-button" onClick={openCreate}><i className="bi bi-plus-lg" /> Add {config.singular}</button></div><MetricCards metrics={metrics} /><div className="content-grid"><div className="list-card"><div className="toolbar"><div className="field-search"><i className="bi bi-search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${searchLabel}...`} /></div><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option>All Status</option><option>Active</option><option>Inactive</option><option>Scheduled</option><option>Pending Review</option><option>Paid</option><option>Refunded</option></select><select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}><option>Sort by: Name (A-Z)</option><option>Recently updated</option></select><button className={`outline-button ${showFilters ? 'button-selected' : ''}`} aria-label="Toggle filters" onClick={() => setShowFilters((open) => !open)}><i className="bi bi-funnel" /></button></div>{showFilters && <div className="filter-note"><i className="bi bi-sliders" /> Results and summaries update from the shared ARGO demo dataset.</div>}<DataTable columns={config.columns} rows={visibleRows} onSelect={setSelected} onEdit={openEdit} onDuplicate={handleDuplicate} selectedId={selected?.id} page={page} pageCount={pageCount} pageSize={pageSize} totalCount={filteredRows.length} onPageChange={setPage} /></div><DetailPanel record={selected} config={config} onClose={() => setSelected(null)} onUpdate={openEdit} onDelete={setConfirmDelete} /></div>{modal && <ActionModal title={`${modal.mode === 'edit' ? 'Edit' : 'Add'} ${config.singular}`} fields={fields} values={modal.values} onChange={(field, value) => setModal((current) => ({ ...current, values: { ...current.values, [field]: value } }))} onClose={() => setModal(null)} onSubmit={saveRecord} submitLabel={modal.mode === 'edit' ? 'Save Changes' : `Create ${config.singular}`} />}{confirmDelete && <ConfirmModal title={`Delete ${config.singular}`} message={`Delete ${confirmDelete.name || confirmDelete.code || confirmDelete.customer || confirmDelete.id}? This action cannot be undone.`} confirmLabel={`Delete ${config.singular}`} onClose={() => setConfirmDelete(null)} onConfirm={performDelete} />}{toast && <Toast message={toast} onClose={() => setToast('')} />}</section>;
+  return <section className="page-content"><div className="page-heading"><div><h1>{config.title}</h1><p>{config.description}</p></div>{!readOnly && <button className="primary-button" onClick={openCreate}><i className="bi bi-plus-lg" /> Add {config.singular}</button>}</div><MetricCards metrics={metrics} /><div className="content-grid"><div className="list-card"><div className="toolbar"><div className="field-search"><i className="bi bi-search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${searchLabel}...`} /></div><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option>All Status</option><option>Active</option><option>Inactive</option><option>Scheduled</option><option>Pending Review</option><option>Paid</option><option>Refunded</option></select><select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}><option>Sort by: Name (A-Z)</option><option>Recently updated</option></select><button className={`outline-button ${showFilters ? 'button-selected' : ''}`} aria-label="Toggle filters" onClick={() => setShowFilters((open) => !open)}><i className="bi bi-funnel" /></button></div>{showFilters && <div className="filter-note"><i className="bi bi-sliders" /> Results and summaries update from the live ARGO dataset.</div>}<DataTable columns={config.columns} rows={visibleRows} onSelect={setSelected} onEdit={readOnly ? undefined : openEdit} onDuplicate={readOnly ? undefined : handleDuplicate} onDelete={readOnly ? undefined : setConfirmDelete} selectedId={selected?.id} page={page} pageCount={pageCount} pageSize={pageSize} totalCount={filteredRows.length} onPageChange={setPage} /></div><DetailPanel record={selected} config={config} onClose={() => setSelected(null)} onUpdate={readOnly ? undefined : openEdit} onDelete={readOnly ? undefined : setConfirmDelete} /></div>{modal && <ActionModal title={`${modal.mode === 'edit' ? 'Edit' : 'Add'} ${config.singular}`} fields={fields} values={modal.values} onChange={(field, value) => setModal((current) => ({ ...current, values: { ...current.values, [field]: value } }))} onClose={() => setModal(null)} onSubmit={saveRecord} submitLabel={modal.mode === 'edit' ? 'Save Changes' : `Create ${config.singular}`} />}{confirmDelete && <ConfirmModal title={`Delete ${config.singular}`} message={`Delete ${confirmDelete.name || confirmDelete.code || confirmDelete.customer || confirmDelete.id}? This action cannot be undone.`} confirmLabel={`Delete ${config.singular}`} onClose={() => setConfirmDelete(null)} onConfirm={performDelete} />}{toast && <Toast message={toast} onClose={() => setToast('')} />}</section>;
 }

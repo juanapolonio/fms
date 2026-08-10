@@ -58,36 +58,42 @@ export function OrdersPage({ mode }) {
   const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
   const openCreate = () => setModal({ mode: 'create', values: { customer: '', type: mode === 'table' ? 'Dine-in' : mode === 'kitchen' ? 'Takeout' : mode === 'customer' ? 'Dine-in' : mode[0].toUpperCase() + mode.slice(1), status: 'Pending', paymentMethod: 'Cash', date: new Date().toISOString().slice(0, 10) } });
   const openEdit = (record) => setModal({ mode: 'edit', record, values: { customer: record.customer === 'ARGO Floor Team' ? record.customer : record.customer, type: record.sourceType || record.type, status: mode === 'kitchen' ? record.kitchenStatus : record.status, paymentMethod: record.paymentMethod, date: record.date } });
-  const saveOrder = () => {
+  const saveOrder = async () => {
     if (!modal.values.customer.trim()) return;
-    if (modal.mode === 'edit') {
-      const patch = { customer: modal.values.customer, type: modal.values.type, paymentMethod: modal.values.paymentMethod, date: modal.values.date };
-      if (mode === 'kitchen') patch.kitchenStatus = modal.values.status;
-      else patch.status = modal.values.status;
-      updateOrder(modal.record.sourceId, patch);
-      setSelected(null);
-      setToast('Order updated and all linked modules refreshed');
-    } else {
-      createOrder(modal.values);
-      setToast('New order added to the shared ARGO queue');
-    }
-    setModal(null);
+    try {
+      if (modal.mode === 'edit') {
+        const patch = { customer: modal.values.customer, type: modal.values.type, paymentMethod: modal.values.paymentMethod, date: modal.values.date };
+        if (mode === 'kitchen') patch.kitchenStatus = modal.values.status;
+        else patch.status = modal.values.status;
+        await updateOrder(modal.record.sourceId, patch);
+        setSelected(null);
+        setToast('Order updated and all linked modules refreshed');
+      } else {
+        await createOrder(modal.values);
+        setToast('New order added to the live ARGO queue');
+      }
+      setModal(null);
+    } catch (error) { setToast(error.response?.data?.detail || 'Unable to save order'); }
   };
-  const advanceOrder = () => {
+  const advanceOrder = async () => {
     if (!selected) return;
     const progression = selected.type === 'Delivery' ? ['Pending', 'Preparing', 'Out for Delivery', 'Delivered'] : selected.type === 'Dine-in' ? ['Pending', 'Preparing', 'Ready', 'Completed'] : ['Pending', 'Preparing', 'Ready for Pickup', 'Completed'];
     const current = mode === 'kitchen' ? selected.kitchenStatus : selected.status;
     const next = progression[Math.min(progression.indexOf(current) + 1, progression.length - 1)];
-    transitionOrder(selected.sourceId, next);
-    setSelected((currentRecord) => currentRecord ? { ...currentRecord, status: next, kitchenStatus: next } : currentRecord);
-    setToast(next === current ? 'Order is already at its final operational status' : `Order advanced to ${next}`);
+    try {
+      await transitionOrder(selected.sourceId, next);
+      setSelected((currentRecord) => currentRecord ? { ...currentRecord, status: next, kitchenStatus: next } : currentRecord);
+      setToast(next === current ? 'Order is already at its final operational status' : `Order advanced to ${next}`);
+    } catch (error) { setToast(error.response?.data?.detail || 'Unable to advance order'); }
   };
-  const submitCancel = () => {
-    cancelOrder(confirmCancel.sourceId);
-    setSelected((record) => record ? { ...record, status: 'Cancelled', paymentStatus: 'Refunded', kitchenStatus: 'Cancelled' } : record);
-    setConfirmCancel(null);
-    setToast('Order cancelled, payment refunded, and cancellation record created');
+  const submitCancel = async () => {
+    try {
+      await cancelOrder(confirmCancel.sourceId);
+      setSelected((record) => record ? { ...record, status: 'Cancelled', paymentStatus: 'Refunded', kitchenStatus: 'Cancelled' } : record);
+      setConfirmCancel(null);
+      setToast('Order cancelled, payment refunded, and cancellation record created');
+    } catch (error) { setToast(error.response?.data?.detail || 'Unable to cancel order'); }
   };
   const statuses = mode === 'kitchen' ? ['Pending', 'Preparing', 'Ready', 'Completed', 'Cancelled'] : ['Pending', 'Preparing', 'Ready', 'Ready for Pickup', 'Out for Delivery', 'Delivered', 'Completed', 'Cancelled'];
-  return <section className="page-content"><div className="page-heading"><div><h1>{config.title}</h1><p>{config.description}</p></div><button className="primary-button" onClick={openCreate}><i className="bi bi-plus-lg" /> New {mode === 'kitchen' ? 'Kitchen Ticket' : 'Order'}</button></div><MetricCards metrics={orderMetrics(orders, mode)} /><div className="content-grid"><div className="list-card"><div className="toolbar"><div className="field-search"><i className="bi bi-search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search orders, customers, tables..." /></div><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All Status</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select><div className="date-filter-wrap"><button className={`outline-button ${dateFilter ? 'button-selected' : ''}`} aria-label={dateFilter ? 'Change selected date' : 'Select date'} onClick={() => setDateOpen((open) => !open)}><i className="bi bi-calendar3" /></button>{dateOpen && <div className="date-popover"><label htmlFor={`order-date-${mode}`}>Order date<input id={`order-date-${mode}`} type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} /></label><button className="text-button" onClick={() => { setDateFilter(''); setDateOpen(false); }}>Clear date</button></div>}</div></div><DataTable columns={config.columns} rows={visibleRows} onSelect={setSelected} onEdit={openEdit} onDuplicate={(record) => { duplicateOrder(record.sourceId); setToast('Order duplicated as a new pending order'); }} selectedId={selected?.id} page={page} pageCount={pageCount} pageSize={pageSize} totalCount={rows.length} onPageChange={setPage} /></div><div><DetailPanel record={selected} config={{ ...config, singular: 'Order', icon: 'bi-receipt' }} onClose={() => setSelected(null)} onUpdate={openEdit} onDelete={setConfirmCancel} deleteLabel="Cancel Order" />{selected && <button className="primary-button order-advance" onClick={advanceOrder}><i className="bi bi-arrow-right-circle" /> Advance Status</button>}</div></div>{modal && <ActionModal title={`${modal.mode === 'edit' ? 'Edit' : 'New'} Order`} fields={[{ key: 'customer', label: 'Customer', placeholder: 'Customer name', required: true }, { key: 'type', label: 'Order type', type: 'select', options: ['Dine-in', 'Takeout', 'Pickup', 'Delivery'] }, { key: 'status', label: mode === 'kitchen' ? 'Preparation status' : 'Order status', type: 'select', options: statuses }, { key: 'paymentMethod', label: 'Payment method', type: 'select', options: ['Cash', 'GCash', 'Card', 'PayMaya'] }, { key: 'date', label: 'Order date', type: 'date' }]} values={modal.values} onChange={(field, value) => setModal((current) => ({ ...current, values: { ...current.values, [field]: value } }))} onClose={() => setModal(null)} onSubmit={saveOrder} submitLabel={modal.mode === 'edit' ? 'Save Changes' : 'Create Order'} />}{confirmCancel && <ConfirmModal title="Cancel Order" message={`Cancel ${confirmCancel.orderNumber || confirmCancel.id}? The linked payment will be marked refunded and a cancellation record will be created.`} confirmLabel="Cancel Order" onClose={() => setConfirmCancel(null)} onConfirm={submitCancel} />}{toast && <Toast message={toast} onClose={() => setToast('')} />}</section>;
+  return <section className="page-content"><div className="page-heading"><div><h1>{config.title}</h1><p>{config.description}</p></div><button className="primary-button" onClick={openCreate}><i className="bi bi-plus-lg" /> New {mode === 'kitchen' ? 'Kitchen Ticket' : 'Order'}</button></div><MetricCards metrics={orderMetrics(orders, mode)} /><div className="content-grid"><div className="list-card"><div className="toolbar"><div className="field-search"><i className="bi bi-search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search orders, customers, tables..." /></div><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All Status</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select><div className="date-filter-wrap"><button className={`outline-button ${dateFilter ? 'button-selected' : ''}`} aria-label={dateFilter ? 'Change selected date' : 'Select date'} onClick={() => setDateOpen((open) => !open)}><i className="bi bi-calendar3" /></button>{dateOpen && <div className="date-popover"><label htmlFor={`order-date-${mode}`}>Order date<input id={`order-date-${mode}`} type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} /></label><button className="text-button" onClick={() => { setDateFilter(''); setDateOpen(false); }}>Clear date</button></div>}</div></div><DataTable columns={config.columns} rows={visibleRows} onSelect={setSelected} onEdit={openEdit} onDuplicate={(record) => duplicateOrder(record.sourceId).then(() => setToast('Order duplicated as a new pending order')).catch((error) => setToast(error.response?.data?.detail || 'Unable to duplicate order'))} selectedId={selected?.id} page={page} pageCount={pageCount} pageSize={pageSize} totalCount={rows.length} onPageChange={setPage} /></div><div><DetailPanel record={selected} config={{ ...config, singular: 'Order', icon: 'bi-receipt' }} onClose={() => setSelected(null)} onUpdate={openEdit} onDelete={setConfirmCancel} deleteLabel="Cancel Order" />{selected && <button className="primary-button order-advance" onClick={advanceOrder}><i className="bi bi-arrow-right-circle" /> Advance Status</button>}</div></div>{modal && <ActionModal title={`${modal.mode === 'edit' ? 'Edit' : 'New'} Order`} fields={[{ key: 'customer', label: 'Customer', placeholder: 'Customer name', required: true }, { key: 'type', label: 'Order type', type: 'select', options: ['Dine-in', 'Takeout', 'Pickup', 'Delivery'] }, { key: 'status', label: mode === 'kitchen' ? 'Preparation status' : 'Order status', type: 'select', options: statuses }, { key: 'paymentMethod', label: 'Payment method', type: 'select', options: ['Cash', 'GCash', 'Card', 'PayMaya'] }, { key: 'date', label: 'Order date', type: 'date' }]} values={modal.values} onChange={(field, value) => setModal((current) => ({ ...current, values: { ...current.values, [field]: value } }))} onClose={() => setModal(null)} onSubmit={saveOrder} submitLabel={modal.mode === 'edit' ? 'Save Changes' : 'Create Order'} />}{confirmCancel && <ConfirmModal title="Cancel Order" message={`Cancel ${confirmCancel.orderNumber || confirmCancel.id}? The linked payment will be marked refunded and a cancellation record will be created.`} confirmLabel="Cancel Order" onClose={() => setConfirmCancel(null)} onConfirm={submitCancel} />}{toast && <Toast message={toast} onClose={() => setToast('')} />}</section>;
 }
