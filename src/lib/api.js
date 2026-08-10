@@ -11,12 +11,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-export async function getResource(path, fallback) {
-  if (import.meta.env.VITE_USE_API !== 'true') return { items: fallback, source: 'demo' };
-  try {
-    const response = await api.get(path);
-    return { items: response.data.items || response.data, source: 'api' };
-  } catch {
-    return { items: fallback, source: 'demo' };
-  }
+export async function getResource(path) {
+  const response = await api.get(path);
+  return { items: response.data.items || response.data, source: 'api' };
 }
