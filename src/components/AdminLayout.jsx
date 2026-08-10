@@ -1,8 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUiStore } from '../stores/useUiStore';
 import { cn } from '../lib/cn';
+import { useMarketplaceStore } from '../stores/useMarketplaceStore';
 
 const primary = [
   { label: 'Menus', path: '/menus', icon: 'bi-book' },
@@ -50,6 +51,10 @@ export function AdminLayout() {
   const navigate = useNavigate();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
+  const loadLiveData = useMarketplaceStore((state) => state.loadLiveData);
+  const loadState = useMarketplaceStore((state) => state.loadState);
+  const loadError = useMarketplaceStore((state) => state.loadError);
+  useEffect(() => { loadLiveData().catch(() => undefined); }, [loadLiveData]);
   const submitGlobalSearch = (event) => {
     if (event.key === 'Enter' && globalSearch.trim()) navigate(`/orders?search=${encodeURIComponent(globalSearch.trim())}`);
   };
@@ -78,6 +83,8 @@ export function AdminLayout() {
           <div className="notification-wrap"><button className="icon-button notification" aria-label="Notifications" onClick={() => setNotificationsOpen((open) => !open)}><i className="bi bi-bell" /><span>5</span></button>{notificationsOpen && <div className="notification-popover"><strong>Notifications</strong><p>5 order updates need attention.</p><button onClick={() => { setNotificationsOpen(false); navigate('/kitchen'); }}>Review kitchen queue</button></div>}</div>
           <div className="profile"><div className="avatar"><i className="bi bi-person-fill" /></div><div><strong>ARGO User</strong><small>Administrator</small></div></div>
         </header>
+        {loadState === 'loading' && <div className="live-data-banner">Connecting to live ARGO data…</div>}
+        {loadState === 'error' && <div className="live-data-banner live-data-error">Live data unavailable: {loadError}</div>}
         <Outlet />
       </main>
     </div>
