@@ -63,6 +63,19 @@ class FoodItem(Base):
     metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
 
+class FoodOption(Base):
+    __tablename__ = "food_options"
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    option_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    choices_json: Mapped[list] = mapped_column("choices", JSONB, default=list, nullable=False)
+    required: Mapped[bool] = mapped_column(default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default=Status.ACTIVE, nullable=False)
+    items_using: Mapped[int] = mapped_column(default=0, nullable=False)
+
+
 class Order(Base):
     __tablename__ = "orders"
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

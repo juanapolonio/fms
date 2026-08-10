@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -76,3 +77,8 @@ class OrderResponse(APIModel):
     tax: Decimal
     delivery_fee: Decimal
     total: Decimal
+
+
+class LiveSnapshot(BaseModel):
+    resources: dict[str, list[dict[str, Any]]]
+    orders: list[dict[str, Any]]
