@@ -10,7 +10,16 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+engine = create_engine(
+    get_settings().database_url,
+    # The API runs as a long-lived service on Render.  Avoiding a pre-flight
+    # ping on every request removes an unnecessary round-trip to Supabase;
+    # pool recycling still prevents stale connections from accumulating.
+    pool_pre_ping=False,
+    pool_recycle=1800,
+    pool_size=5,
+    max_overflow=5,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 

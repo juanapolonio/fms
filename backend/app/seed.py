@@ -99,7 +99,7 @@ def seed() -> None:
             "Dine-in": ["Preparing", "Ready", "Completed", "Completed", "Cancelled"],
             "Takeout": ["Preparing", "Ready for Pickup", "Completed", "Completed", "Cancelled"],
             "Pickup": ["Pending", "Preparing", "Ready for Pickup", "Completed", "Cancelled"],
-            "Delivery": ["Pending", "Preparing", "Out for Delivery", "Delivered", "Cancelled"],
+            "Delivery": ["Pending", "Preparing", "Ready for Dispatch", "Out for Delivery", "Delivered", "Cancelled"],
         }
         order_types = list(statuses)
         for index in range(72):
@@ -118,9 +118,10 @@ def seed() -> None:
             total = subtotal - discount + service_charge + tax + delivery_fee
             customer, contact = CUSTOMERS[index % len(CUSTOMERS)]
             created_at = now - timedelta(days=index // 3, hours=index % 12)
-            payment_status = "Refunded" if order_status == "Cancelled" else "Pending" if index % 7 == 0 else "Paid"
-            metadata = {"customer": customer, "contact": contact, "paymentMethod": METHODS[index % len(METHODS)], "table": f"Table {1 + index % 12}" if order_type == "Dine-in" else None, "guests": 2 + index % 5 if order_type == "Dine-in" else None, "address": ADDRESSES[index % len(ADDRESSES)] if order_type == "Delivery" else None, "rider": ["Miguel Santos", "Carlo Reyes", "No rider assigned"][index % 3] if order_type == "Delivery" else None, "notes": "Please include extra ketchup and napkins." if index % 6 == 0 else ""}
-            order = Order(organization_id=ORG_ID, order_number=f"{order_type[:2].upper()}-{140 + index:05d}", order_type=order_type, status=order_status, kitchen_status="Completed" if order_status in {"Completed", "Delivered"} else "Ready" if order_status in {"Ready", "Ready for Pickup"} else order_status, payment_status=payment_status, subtotal=subtotal, discount_total=discount, service_charge=service_charge, tax=tax, delivery_fee=delivery_fee, total=total, metadata_json=metadata, created_at=created_at)
+            payment_status = "Refunded" if order_status == "Cancelled" else "Paid" if order_status in {"Completed", "Delivered"} else "Pending" if index % 7 == 0 else "Paid"
+            metadata = {"customer": customer, "contact": contact, "paymentMethod": METHODS[index % len(METHODS)], "table": f"Table {1 + index % 12}" if order_type == "Dine-in" else None, "guests": 2 + index % 5 if order_type == "Dine-in" else None, "server": "ARGO Floor Team" if order_type == "Dine-in" else None, "pickupTime": created_at.strftime("%H:%M") if order_type == "Pickup" else None, "address": ADDRESSES[index % len(ADDRESSES)] if order_type == "Delivery" else None, "rider": ["Miguel Santos", "Carlo Reyes", "No rider assigned"][index % 3] if order_type == "Delivery" else None, "notes": "Please include extra ketchup and napkins." if index % 6 == 0 else ""}
+            kitchen_status = "Completed" if order_status in {"Completed", "Delivered", "Out for Delivery"} else "Ready" if order_status in {"Ready", "Ready for Pickup", "Ready for Dispatch"} else order_status
+            order = Order(organization_id=ORG_ID, order_number=f"{order_type[:2].upper()}-{140 + index:05d}", order_type=order_type, status=order_status, kitchen_status=kitchen_status, payment_status=payment_status, subtotal=subtotal, discount_total=discount, service_charge=service_charge, tax=tax, delivery_fee=delivery_fee, total=total, metadata_json=metadata, created_at=created_at)
             db.add(order)
             db.flush()
             db.add(OrderItem(organization_id=ORG_ID, order_id=order.id, food_item_id=first.id, item_name_snapshot=first.name, unit_price_snapshot=first.price, quantity=quantity, line_total=Decimal(first.price) * quantity, options_json=[]))

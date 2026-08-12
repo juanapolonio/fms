@@ -19,6 +19,7 @@ class MenuCreate(BaseModel):
     description: str | None = None
     status: str = "Active"
     sort_order: int = 0
+    item_count: int = Field(default=0, ge=0, le=9999)
 
 
 class MenuResponse(APIModel):
@@ -28,6 +29,7 @@ class MenuResponse(APIModel):
     description: str | None
     status: str
     sort_order: int
+    item_count: int
 
 
 class FoodItemCreate(BaseModel):
