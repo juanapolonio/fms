@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.api.routes import _sort_resource_rows
 from app.main import app
 
 
@@ -40,6 +41,15 @@ def test_menu_rows_use_their_own_persisted_dish_count() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert all(isinstance(row["items"], int) and row["items"] >= 0 for row in payload["items"])
+
+
+def test_recent_payment_rows_keep_database_creation_order() -> None:
+    rows = [
+        {"id": "fff", "createdAt": "2026-08-14T09:00:00+00:00"},
+        {"id": "001", "createdAt": "2026-08-13T09:00:00+00:00"},
+    ]
+
+    assert [row["id"] for row in _sort_resource_rows(rows, "payments", "recent")] == ["fff", "001"]
 
 
 def test_snapshot_remains_available_and_consistent() -> None:

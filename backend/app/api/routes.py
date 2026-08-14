@@ -142,6 +142,13 @@ def _page(rows: list[dict[str, Any]], page: int, page_size: int) -> dict[str, An
     }
 
 
+def _sort_resource_rows(rows: list[dict[str, Any]], resource: str, sort: str) -> list[dict[str, Any]]:
+    """Apply resource sorting without overriding database-backed recent order."""
+    if sort == "recent" and resource not in {"payments", "cancellations"}:
+        rows.sort(key=lambda row: str(row.get("id", "")), reverse=True)
+    return rows
+
+
 def _resource_rows(resource: str, db: Session, organization_id: UUID) -> list[dict[str, Any]]:
     """Serialize one resource at a time instead of rebuilding the whole app snapshot."""
     if resource == "menus":
@@ -257,8 +264,7 @@ def list_resource(
         rows = [row for row in rows if row.get("status") == status]
     if available_only:
         rows = [row for row in rows if row.get("status") == "Active" and row.get("availability", "In Stock") == "In Stock"]
-    if sort == "recent":
-        rows.sort(key=lambda row: str(row.get("id", "")), reverse=True)
+    _sort_resource_rows(rows, resource, sort)
     return {**_page(rows, page, page_size), "metrics": _resource_metrics(resource, _resource_rows(resource, db, current.organization_id), db, current.organization_id)}
 
 
