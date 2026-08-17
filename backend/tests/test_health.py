@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 
 from app.api.routes import _sort_resource_rows
@@ -50,6 +52,30 @@ def test_recent_payment_rows_keep_database_creation_order() -> None:
     ]
 
     assert [row["id"] for row in _sort_resource_rows(rows, "payments", "recent")] == ["fff", "001"]
+
+
+def test_operational_pages_are_limited_and_recent_payments_have_timestamps() -> None:
+    client = TestClient(app)
+    payments = client.get("/api/marketplace/resources/payments", params={"page": 1, "page_size": 10, "sort": "recent"})
+    cancellations = client.get("/api/marketplace/resources/cancellations", params={"page": 1, "page_size": 10, "sort": "recent"})
+
+    assert payments.status_code == 200
+    assert cancellations.status_code == 200
+    payment_rows = payments.json()["items"]
+    assert len(payment_rows) <= 10
+    assert len(cancellations.json()["items"]) <= 10
+    timestamps = [datetime.fromisoformat(row["createdAt"]) for row in payment_rows if row["createdAt"]]
+    assert timestamps == sorted(timestamps, reverse=True)
+
+
+def test_catalog_metrics_remain_organization_wide_when_rows_are_filtered() -> None:
+    client = TestClient(app)
+    all_menus = client.get("/api/marketplace/resources/menus", params={"page": 1, "page_size": 10})
+    filtered_menus = client.get("/api/marketplace/resources/menus", params={"page": 1, "page_size": 10, "search": "unlikely-filter-value"})
+
+    assert all_menus.status_code == 200
+    assert filtered_menus.status_code == 200
+    assert all_menus.json()["metrics"] == filtered_menus.json()["metrics"]
 
 
 def test_snapshot_remains_available_and_consistent() -> None:

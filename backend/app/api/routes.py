@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
+from datetime import date as calendar_date
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.security import RequestContext, get_request_context, require_roles
@@ -107,6 +108,39 @@ def _serialize_order(order: Order, items: list[OrderItem], payment: Payment | No
     }
 
 
+def _serialize_payment(payment: Payment, order: Order) -> dict[str, Any]:
+    return {
+        "id": str(payment.id),
+        "transaction": f"#PAY-{str(payment.id).split('-')[0].upper()}",
+        "order": f"#{order.order_number.lstrip('#')}",
+        "orderId": str(order.id),
+        "customer": _metadata(order).get("customer", "ARGO Customer"),
+        "method": payment.method,
+        "amount": _money(payment.amount),
+        "amountValue": float(payment.amount),
+        "status": payment.status,
+        "date": _date_label(payment.created_at),
+        "createdAt": payment.created_at.isoformat() if payment.created_at else "",
+    }
+
+
+def _serialize_cancellation(cancellation: Cancellation, order: Order) -> dict[str, Any]:
+    return {
+        "id": str(cancellation.id),
+        "cancellationNumber": f"#CO-{str(cancellation.id).split('-')[0].upper()}",
+        "orderId": f"#{order.order_number.lstrip('#')}",
+        "orderSourceId": str(order.id),
+        "customer": _metadata(order).get("customer", "ARGO Customer"),
+        "type": order.order_type,
+        "date": _date_label(order.created_at),
+        "reason": cancellation.reason,
+        "status": cancellation.status,
+        "refund": _money(cancellation.refund_amount),
+        "refundValue": float(cancellation.refund_amount),
+        "paymentStatus": order.payment_status,
+    }
+
+
 def _snapshot(db: Session, organization_id: UUID) -> dict[str, Any]:
     resource_keys = ("menus", "categories", "foodItems", "foodOptions", "discounts", "payments", "cancellations")
     resources = {resource: _resource_rows(resource, db, organization_id) for resource in resource_keys}
@@ -135,6 +169,16 @@ def _page(rows: list[dict[str, Any]], page: int, page_size: int) -> dict[str, An
     first = (page - 1) * page_size
     return {
         "items": rows[first:first + page_size],
+        "total": total,
+        "page": page,
+        "pageSize": page_size,
+        "pageCount": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+def _paginated(items: list[dict[str, Any]], total: int, page: int, page_size: int) -> dict[str, Any]:
+    return {
+        "items": items,
         "total": total,
         "page": page,
         "pageSize": page_size,
@@ -172,18 +216,13 @@ def _resource_rows(resource: str, db: Session, organization_id: UUID) -> list[di
         orders = {row.id: row for row in db.scalars(select(Order).where(Order.organization_id == organization_id)).all()}
         if resource == "payments":
             payment_rows = db.scalars(select(Payment).where(Payment.organization_id == organization_id).order_by(Payment.created_at.desc())).all()
-            return [{"id": str(row.id), "transaction": f"#PAY-{str(row.id).split('-')[0].upper()}", "order": f"#{orders[row.order_id].order_number.lstrip('#')}" if row.order_id in orders else "—", "orderId": str(row.order_id), "customer": _metadata(orders[row.order_id]).get("customer", "ARGO Customer") if row.order_id in orders else "ARGO Customer", "method": row.method, "amount": _money(row.amount), "amountValue": float(row.amount), "status": row.status, "date": _date_label(row.created_at)} for row in payment_rows]
+            return [_serialize_payment(row, orders[row.order_id]) for row in payment_rows if row.order_id in orders]
         cancellation_rows = db.scalars(select(Cancellation).where(Cancellation.organization_id == organization_id).order_by(Cancellation.id.desc())).all()
-        return [{"id": str(row.id), "cancellationNumber": f"#CO-{str(row.id).split('-')[0].upper()}", "orderId": f"#{orders[row.order_id].order_number.lstrip('#')}" if row.order_id in orders else "—", "orderSourceId": str(row.order_id), "customer": _metadata(orders[row.order_id]).get("customer", "ARGO Customer") if row.order_id in orders else "ARGO Customer", "type": orders[row.order_id].order_type if row.order_id in orders else "—", "date": _date_label(orders[row.order_id].created_at) if row.order_id in orders else "—", "reason": row.reason, "status": row.status, "refund": _money(row.refund_amount), "refundValue": float(row.refund_amount), "paymentStatus": orders[row.order_id].payment_status if row.order_id in orders else "—"} for row in cancellation_rows]
+        return [_serialize_cancellation(row, orders[row.order_id]) for row in cancellation_rows if row.order_id in orders]
     raise HTTPException(status_code=404, detail="Unknown resource")
 
 
 def _resource_metrics(resource: str, rows: list[dict[str, Any]], db: Session, organization_id: UUID) -> list[list[str]]:
-    paid_sales = db.scalar(select(func.coalesce(func.sum(Order.total), 0)).where(Order.organization_id == organization_id, Order.payment_status.not_in(["Pending", "Refunded"]))) or Decimal("0")
-    discount_total = db.scalar(select(func.coalesce(func.sum(Order.discount_total), 0)).where(Order.organization_id == organization_id)) or Decimal("0")
-    item_quantity = db.scalar(select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(OrderItem.organization_id == organization_id)) or 0
-    active = sum(row.get("status") == "Active" for row in rows)
-    inactive = sum(row.get("status") == "Inactive" for row in rows)
     if resource == "payments":
         def amounts(status: str) -> Decimal:
             return sum((Decimal(str(row.get("amountValue", 0))) for row in rows if row.get("status") == status), Decimal("0"))
@@ -192,6 +231,11 @@ def _resource_metrics(resource: str, rows: list[dict[str, Any]], db: Session, or
     if resource == "cancellations":
         refunds = sum(Decimal(str(row.get("refundValue", 0))) for row in rows)
         return [[str(len(rows)), "Total Cancellations"], [str(sum(row.get("status") == "Pending Review" for row in rows)), "Pending Review"], [str(sum(row.get("status") == "Approved" for row in rows)), "Approved"], [str(sum(row.get("status") == "Refunded" for row in rows)), "Refunded"], [_money(refunds), "Total Refunded"]]
+    paid_sales = db.scalar(select(func.coalesce(func.sum(Order.total), 0)).where(Order.organization_id == organization_id, Order.payment_status.not_in(["Pending", "Refunded"]))) or Decimal("0")
+    discount_total = db.scalar(select(func.coalesce(func.sum(Order.discount_total), 0)).where(Order.organization_id == organization_id)) or Decimal("0")
+    item_quantity = db.scalar(select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(OrderItem.organization_id == organization_id)) or 0
+    active = sum(row.get("status") == "Active" for row in rows)
+    inactive = sum(row.get("status") == "Inactive" for row in rows)
     if resource == "discounts":
         return [[str(len(rows)), "Total Discounts"], [str(active), "Active Discounts"], [str(sum(row.get("status") == "Scheduled" for row in rows)), "Scheduled"], [str(inactive), "Inactive"], [_money(discount_total), "Discount Given"]]
     if resource == "foodItems":
@@ -203,32 +247,61 @@ def _resource_metrics(resource: str, rows: list[dict[str, Any]], db: Session, or
     return [[str(len(rows)), "Total Menus"], [str(active), "Active Menus"], [str(inactive), "Inactive Menus"], [str(item_quantity), "Items Sold"], [_money(paid_sales), "Menu Sales"]]
 
 
-def _order_metrics(orders: list[Order], mode: str) -> list[list[str]]:
-    scoped = orders
+def _order_scope_conditions(organization_id: UUID, mode: str) -> list[Any]:
+    conditions: list[Any] = [Order.organization_id == organization_id]
     if mode == "table":
-        scoped = [order for order in orders if order.order_type == "Dine-in"]
+        conditions.append(Order.order_type == "Dine-in")
     elif mode in {"takeout", "pickup", "delivery"}:
-        scoped = [order for order in orders if order.order_type == mode.title()]
+        conditions.append(Order.order_type == mode.title())
     elif mode == "kitchen":
-        scoped = [order for order in orders if order.kitchen_status in ACTIVE_KITCHEN_STATUSES]
+        conditions.append(Order.kitchen_status.in_(ACTIVE_KITCHEN_STATUSES))
+    return conditions
 
-    def count(status: str, *, kitchen: bool = False) -> int:
-        return sum((order.kitchen_status if kitchen else order.status) == status for order in scoped)
 
-    amount = sum(order.total for order in scoped)
+def _count_when(condition: Any) -> Any:
+    return func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
+
+
+def _order_metrics(db: Session, organization_id: UUID, mode: str) -> list[list[str]]:
+    scope = _order_scope_conditions(organization_id, mode)
+    values = db.execute(
+        select(
+            func.count(Order.id).label("total"),
+            func.coalesce(func.sum(Order.total), 0).label("amount"),
+            _count_when(Order.status == "Pending").label("pending"),
+            _count_when(Order.status == "Preparing").label("preparing"),
+            _count_when(Order.status == "Ready").label("ready"),
+            _count_when(Order.status == "Ready for Pickup").label("ready_for_pickup"),
+            _count_when(Order.status == "Out for Delivery").label("out_for_delivery"),
+            _count_when(Order.status == "Delivered").label("delivered"),
+            _count_when(Order.status == "Completed").label("completed"),
+            _count_when(Order.status == "Cancelled").label("cancelled"),
+            _count_when(Order.kitchen_status == "Pending").label("kitchen_pending"),
+            _count_when(Order.kitchen_status == "Preparing").label("kitchen_preparing"),
+            _count_when(Order.kitchen_status == "Ready").label("kitchen_ready"),
+        ).where(*scope)
+    ).mappings().one()
+    amount = values["amount"]
     if mode == "table":
-        occupied = {_metadata(order).get("table") for order in scoped if order.status not in TERMINAL_ORDER_STATUSES and _metadata(order).get("table")}
-        return [[str(len(occupied)), "Occupied Tables"], [str(count("Preparing")), "Preparing"], [str(count("Ready")), "Ready to Serve"], [str(count("Completed")), "Completed"], [_money(amount), "Table Sales"]]
+        occupied = db.scalar(
+            select(func.count(func.distinct(Order.metadata_json["table"].astext))).where(
+                Order.organization_id == organization_id,
+                Order.order_type == "Dine-in",
+                Order.status.not_in(TERMINAL_ORDER_STATUSES),
+            )
+        ) or 0
+        return [[str(occupied), "Occupied Tables"], [str(values["preparing"]), "Preparing"], [str(values["ready"]), "Ready to Serve"], [str(values["completed"]), "Completed"], [_money(amount), "Table Sales"]]
     if mode == "takeout":
-        return [[str(len(scoped)), "Takeout Orders"], [str(count("Ready for Pickup")), "Ready for Pickup"], [str(count("Preparing")), "Preparing"], [str(count("Completed")), "Completed"], [_money(amount), "Takeout Sales"]]
+        return [[str(values["total"]), "Takeout Orders"], [str(values["ready_for_pickup"]), "Ready for Pickup"], [str(values["preparing"]), "Preparing"], [str(values["completed"]), "Completed"], [_money(amount), "Takeout Sales"]]
     if mode == "pickup":
-        return [[str(len(scoped)), "Pickup Orders"], [str(count("Pending")), "Pending"], [str(count("Ready for Pickup")), "Ready for Pickup"], [str(count("Completed")), "Completed"], [str(count("Cancelled")), "Cancelled"]]
+        return [[str(values["total"]), "Pickup Orders"], [str(values["pending"]), "Pending"], [str(values["ready_for_pickup"]), "Ready for Pickup"], [str(values["completed"]), "Completed"], [str(values["cancelled"]), "Cancelled"]]
     if mode == "delivery":
-        return [[str(len(scoped)), "Delivery Orders"], [str(count("Pending")), "Pending"], [str(count("Out for Delivery")), "Out for Delivery"], [str(count("Delivered")), "Delivered"], [str(count("Cancelled")), "Cancelled"]]
+        return [[str(values["total"]), "Delivery Orders"], [str(values["pending"]), "Pending"], [str(values["out_for_delivery"]), "Out for Delivery"], [str(values["delivered"]), "Delivered"], [str(values["cancelled"]), "Cancelled"]]
     if mode == "kitchen":
-        return [[str(len(scoped)), "Kitchen Queue"], [str(count("Pending", kitchen=True)), "Pending"], [str(count("Preparing", kitchen=True)), "Preparing"], [str(count("Ready", kitchen=True)), "Ready"], [str(sum(order.kitchen_status == "Completed" for order in orders)), "Completed"]]
-    completed = sum(order.status in {"Completed", "Delivered"} for order in scoped)
-    return [[str(len(scoped)), "Total Orders"], [str(count("Preparing")), "Preparing"], [str(count("Out for Delivery")), "Out for Delivery"], [str(completed), "Completed"], [str(count("Cancelled")), "Cancelled"]]
+        completed = db.scalar(select(func.count(Order.id)).where(Order.organization_id == organization_id, Order.kitchen_status == "Completed")) or 0
+        return [[str(values["total"]), "Kitchen Queue"], [str(values["kitchen_pending"]), "Pending"], [str(values["kitchen_preparing"]), "Preparing"], [str(values["kitchen_ready"]), "Ready"], [str(completed), "Completed"]]
+    completed = int(values["completed"] or 0) + int(values["delivered"] or 0)
+    return [[str(values["total"]), "Total Orders"], [str(values["preparing"]), "Preparing"], [str(values["out_for_delivery"]), "Out for Delivery"], [str(completed), "Completed"], [str(values["cancelled"]), "Cancelled"]]
 @router.get("/health", response_model=HealthResponse, tags=["system"])
 def health() -> HealthResponse:
     return HealthResponse(status="ok", service="fms-marketplace-api")
@@ -256,7 +329,79 @@ def list_resource(
     db: Session = Depends(get_db),
     current: RequestContext = Depends(get_request_context),
 ) -> dict[str, Any]:
-    rows = _resource_rows(resource, db, current.organization_id)
+    if resource == "payments":
+        conditions: list[Any] = [Payment.organization_id == current.organization_id, Order.organization_id == current.organization_id]
+        if status:
+            conditions.append(Payment.status == status)
+        if search and (needle := search.strip().lstrip("#")):
+            pattern = f"%{needle}%"
+            payment_id_pattern = f"%{needle.removeprefix('PAY-')}%"
+            conditions.append(or_(
+                Payment.method.ilike(pattern),
+                cast(Payment.id, String).ilike(payment_id_pattern),
+                Order.order_number.ilike(pattern),
+                cast(Order.metadata_json, String).ilike(pattern),
+            ))
+        total = int(db.scalar(select(func.count(Payment.id)).select_from(Payment).join(Order, Order.id == Payment.order_id).where(*conditions)) or 0)
+        payment_rows = db.execute(
+            select(Payment, Order)
+            .join(Order, Order.id == Payment.order_id)
+            .where(*conditions)
+            .order_by(Payment.created_at.desc(), Payment.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        metrics = db.execute(
+            select(
+                func.coalesce(func.sum(Payment.amount), 0).label("total"),
+                func.coalesce(func.sum(Payment.amount).filter(Payment.status == "Paid"), 0).label("paid"),
+                func.coalesce(func.sum(Payment.amount).filter(Payment.status == "Pending"), 0).label("pending"),
+                func.coalesce(func.sum(Payment.amount).filter(Payment.status == "Refunded"), 0).label("refunded"),
+                func.count(Payment.id).label("count"),
+            ).where(Payment.organization_id == current.organization_id)
+        ).mappings().one()
+        return {
+            **_paginated([_serialize_payment(payment, order) for payment, order in payment_rows], total, page, page_size),
+            "metrics": [[_money(metrics["total"]), "Total Payments"], [_money(metrics["paid"]), "Paid Amount"], [_money(metrics["pending"]), "Pending"], [_money(metrics["refunded"]), "Refunded"], [str(metrics["count"]), "Transactions"]],
+        }
+    if resource == "cancellations":
+        conditions = [Cancellation.organization_id == current.organization_id, Order.organization_id == current.organization_id]
+        if status:
+            conditions.append(Cancellation.status == status)
+        if search and (needle := search.strip().lstrip("#")):
+            pattern = f"%{needle}%"
+            cancellation_id_pattern = f"%{needle.removeprefix('CO-')}%"
+            conditions.append(or_(
+                cast(Cancellation.id, String).ilike(cancellation_id_pattern),
+                Cancellation.reason.ilike(pattern),
+                Cancellation.status.ilike(pattern),
+                Order.order_number.ilike(pattern),
+                cast(Order.metadata_json, String).ilike(pattern),
+            ))
+        total = int(db.scalar(select(func.count(Cancellation.id)).select_from(Cancellation).join(Order, Order.id == Cancellation.order_id).where(*conditions)) or 0)
+        cancellation_rows = db.execute(
+            select(Cancellation, Order)
+            .join(Order, Order.id == Cancellation.order_id)
+            .where(*conditions)
+            .order_by(Order.created_at.desc(), Cancellation.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        metrics = db.execute(
+            select(
+                func.count(Cancellation.id).label("total"),
+                _count_when(Cancellation.status == "Pending Review").label("pending"),
+                _count_when(Cancellation.status == "Approved").label("approved"),
+                _count_when(Cancellation.status == "Refunded").label("refunded"),
+                func.coalesce(func.sum(Cancellation.refund_amount), 0).label("refund_total"),
+            ).where(Cancellation.organization_id == current.organization_id)
+        ).mappings().one()
+        return {
+            **_paginated([_serialize_cancellation(cancellation, order) for cancellation, order in cancellation_rows], total, page, page_size),
+            "metrics": [[str(metrics["total"]), "Total Cancellations"], [str(metrics["pending"]), "Pending Review"], [str(metrics["approved"]), "Approved"], [str(metrics["refunded"]), "Refunded"], [_money(metrics["refund_total"]), "Total Refunded"]],
+        }
+    all_rows = _resource_rows(resource, db, current.organization_id)
+    rows = list(all_rows)
     query = (search or "").lower().strip()
     if query:
         rows = [row for row in rows if query in " ".join(str(value) for value in row.values()).lower()]
@@ -265,7 +410,7 @@ def list_resource(
     if available_only:
         rows = [row for row in rows if row.get("status") == "Active" and row.get("availability", "In Stock") == "In Stock"]
     _sort_resource_rows(rows, resource, sort)
-    return {**_page(rows, page, page_size), "metrics": _resource_metrics(resource, _resource_rows(resource, db, current.organization_id), db, current.organization_id)}
+    return {**_page(rows, page, page_size), "metrics": _resource_metrics(resource, all_rows, db, current.organization_id)}
 
 
 @router.get("/menus", tags=["catalog"])
@@ -292,23 +437,34 @@ def list_orders(
     db: Session = Depends(get_db),
     current: RequestContext = Depends(get_request_context),
 ) -> dict[str, Any]:
-    orders = list(db.scalars(select(Order).where(Order.organization_id == current.organization_id).order_by(Order.created_at.desc())).all())
-    if mode == "table":
-        orders = [order for order in orders if order.order_type == "Dine-in"]
-    elif mode in {"takeout", "pickup", "delivery"}:
-        orders = [order for order in orders if order.order_type == mode.title()]
-    elif mode == "kitchen":
-        orders = [order for order in orders if order.kitchen_status in ACTIVE_KITCHEN_STATUSES]
-    metrics = _order_metrics(list(db.scalars(select(Order).where(Order.organization_id == current.organization_id)).all()), mode)
+    conditions = _order_scope_conditions(current.organization_id, mode)
+    metrics = _order_metrics(db, current.organization_id, mode)
+    if order_type:
+        conditions.append(Order.order_type == order_type)
     if status_filter:
-        orders = [order for order in orders if (order.kitchen_status if mode == "kitchen" else order.status) == status_filter]
+        conditions.append((Order.kitchen_status if mode == "kitchen" else Order.status) == status_filter)
     if date:
-        orders = [order for order in orders if order.created_at and order.created_at.astimezone(timezone.utc).date().isoformat() == date]
+        try:
+            requested_date = calendar_date.fromisoformat(date)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Date must use YYYY-MM-DD") from exc
+        start = datetime.combine(requested_date, time.min, tzinfo=timezone.utc)
+        conditions.extend([Order.created_at >= start, Order.created_at < start + timedelta(days=1)])
     if search:
-        needle = search.lower()
-        orders = [order for order in orders if needle in f"{order.order_number} {_metadata(order).get('customer', '')} {_metadata(order).get('table', '')}".lower()]
-    total = len(orders)
-    paged_orders = orders[(page - 1) * page_size:page * page_size]
+        needle = search.strip().lstrip("#")
+        if needle:
+            pattern = f"%{needle}%"
+            conditions.append(or_(Order.order_number.ilike(pattern), cast(Order.metadata_json, String).ilike(pattern)))
+    total = int(db.scalar(select(func.count(Order.id)).where(*conditions)) or 0)
+    paged_orders = list(
+        db.scalars(
+            select(Order)
+            .where(*conditions)
+            .order_by(Order.created_at.desc(), Order.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+    )
     ids = [order.id for order in paged_orders]
     items_by_order: dict[UUID, list[OrderItem]] = {}
     for item in db.scalars(select(OrderItem).where(OrderItem.organization_id == current.organization_id, OrderItem.order_id.in_(ids))).all() if ids else []:

@@ -1,11 +1,13 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminLayout } from './components/AdminLayout';
 import { ResourcePage } from './pages/ResourcePage';
 import { OrdersPage } from './pages/OrdersPage';
-import { ReportsPage } from './pages/ReportsPage';
 import { PaymentsPage } from './pages/PaymentsPage';
 import { CancellationsPage } from './pages/CancellationsPage';
 import { resourceConfigs } from './data/resourceConfigs';
+
+const ReportsPage = lazy(() => import('./pages/ReportsPage').then(({ ReportsPage: Page }) => ({ default: Page })));
 
 export default function App() {
   return (
@@ -26,7 +28,7 @@ export default function App() {
         <Route path="payments" element={<PaymentsPage />} />
         <Route path="discounts" element={<ResourcePage config={resourceConfigs.discounts} />} />
         <Route path="cancellations" element={<CancellationsPage />} />
-        <Route path="reports" element={<ReportsPage />} />
+        <Route path="reports" element={<Suspense fallback={<section className="page-content">Loading sales reports…</section>}><ReportsPage /></Suspense>} />
         <Route path="settings" element={<Navigate to="/menus" replace />} />
         <Route path="users" element={<Navigate to="/menus" replace />} />
         <Route path="*" element={<Navigate to="/menus" replace />} />
