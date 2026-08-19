@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useUiStore } from '../stores/useUiStore';
 import { cn } from '../lib/cn';
 
@@ -34,6 +34,21 @@ function NavGroup({ label, items, collapsed }) {
 export function AdminLayout() {
   const { sidebarCollapsed, toggleSidebar } = useUiStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  return <div className="app-shell"><aside className={cn('sidebar', sidebarCollapsed && 'sidebar-collapsed')}><div className="brand"><div className="brand-mark"><i className="bi bi-egg-fried" /></div>{!sidebarCollapsed && <div><strong>FOOD ORDERING</strong><span>SYSTEM</span></div>}</div><nav className="sidebar-nav"><NavGroup label="CATALOG" items={primary} collapsed={sidebarCollapsed} /><NavGroup label="ORDERS" items={orders} collapsed={sidebarCollapsed} /><NavGroup label="OPERATIONS" items={operations} collapsed={sidebarCollapsed} /></nav></aside><main className="main-area"><header className="topbar"><button className="icon-button" onClick={toggleSidebar} aria-label="Toggle sidebar"><i className="bi bi-list" /></button><div className="topbar-spacer" /><div className="notification-wrap"><button className="icon-button notification" aria-label="Notifications" onClick={() => setNotificationsOpen((open) => !open)}><i className="bi bi-bell" /><span>5</span></button>{notificationsOpen && <div className="notification-popover"><strong>Notifications</strong><p>5 order updates need attention.</p><button onClick={() => { setNotificationsOpen(false); navigate('/kitchen'); }}>Review kitchen queue</button></div>}</div><div className="profile"><div className="avatar"><i className="bi bi-person-fill" /></div><div><strong>ARGO User</strong><small>Administrator</small></div></div></header><Outlet /></main></div>;
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
+  const handleSidebarToggle = () => {
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      setMobileNavOpen((open) => !open);
+      return;
+    }
+    toggleSidebar();
+  };
+
+  return <div className="app-shell"><aside className={cn('sidebar', sidebarCollapsed && 'sidebar-collapsed', mobileNavOpen && 'sidebar-mobile-open')}><div className="brand"><div className="brand-mark"><i className="bi bi-egg-fried" /></div>{!sidebarCollapsed && <div><strong>FOOD ORDERING</strong><span>SYSTEM</span></div>}</div><nav className="sidebar-nav"><NavGroup label="CATALOG" items={primary} collapsed={sidebarCollapsed} /><NavGroup label="ORDERS" items={orders} collapsed={sidebarCollapsed} /><NavGroup label="OPERATIONS" items={operations} collapsed={sidebarCollapsed} /></nav></aside><button className={cn('mobile-sidebar-backdrop', mobileNavOpen && 'mobile-sidebar-backdrop-visible')} aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} /><main className="main-area"><header className="topbar"><button className="icon-button" onClick={handleSidebarToggle} aria-label="Toggle sidebar" aria-expanded={mobileNavOpen}><i className="bi bi-list" /></button><div className="topbar-spacer" /><div className="notification-wrap"><button className="icon-button notification" aria-label="Notifications" onClick={() => setNotificationsOpen((open) => !open)}><i className="bi bi-bell" /><span>5</span></button>{notificationsOpen && <div className="notification-popover"><strong>Notifications</strong><p>5 order updates need attention.</p><button onClick={() => { setNotificationsOpen(false); navigate('/kitchen'); }}>Review kitchen queue</button></div>}</div><div className="profile"><div className="avatar"><i className="bi bi-person-fill" /></div><div><strong>ARGO User</strong><small>Administrator</small></div></div></header><Outlet /></main></div>;
 }
